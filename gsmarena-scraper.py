@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from pathlib import Path
 from stem import Signal
 from stem.control import Controller
+import os
 
 logger = logging.getLogger("gsmarena-scraper")
 temps_debut = time.time()
@@ -190,7 +191,7 @@ def extract_brand_infos(network, brand):
                 if completed:
                     logger.info("we are done")
                     return smartphone_list
-                if smartphone is not None:
+                if smartphone_dict is not None:
                     smartphone_list.append(smartphone_dict)
         else:
             soup_page.decompose()
@@ -204,46 +205,75 @@ def main():
     args = parse_args()
 
     network = tor_network()
+    export_dir = "Exports"
+    Path(export_dir).mkdir(parents=True, exist_ok=True)
 
-    url_index = "https://www.gsmarena.com/makers.php3"
-    soup_index = network.get_soup(url_index)
+    if args.brand_names is not None:
+        url_index = "https://www.gsmarena.com/makers.php3"
+        soup_index = network.get_soup(url_index)
 
-    brands = soup_index.find("div", {"class": "st-text"}).find_all("a")
-    soup_index.decompose()
-    Path("Exports").mkdir(parents=True, exist_ok=True)
+        brands = soup_index.find("div", {"class": "st-text"}).find_all("a")
+        soup_index.decompose()
+        global_list_smartphones = get_smartphones_from_brands(args.brand_names, network, brands)
+        all_export_file = export_dir + "/all-brands-export.csv"
+    elif args.search is not None:
+        url_index = "https://www.gsmarena.com/res.php3?sSearch=%s" % "+".join(args.search)
+        logger.debug("%s" % url_index)
+        phones_index = network.get_soup(url_index)
 
+        phones = phones_index.find("div", {"class": "makers"}).find_all("a")
+        phones_index.decompose()
+        global_list_smartphones = get_smartphones_from_search(network, phones)
+        all_export_file = export_dir + "/phones-export.csv"
+
+
+    logger.info("Exporting all smartphone to %s.", all_export_file)
+    global_list_smartphones.to_csv(all_export_file, sep=";", index=False)
+    logger.info("Runtime : %.2f seconds" % (time.time() - temps_debut))
+
+def get_smartphones_from_brands(valid_brands, network, brands):
     global_list_smartphones = pd.DataFrame()
     for brand in brands:
         brand_name = extract_brand_name(brand)
-        if brand_name.lower().replace("-phones", "") in args.brand_names:
-            brand_export_file = f"Exports/{brand_name}_export.csv"
-            # If file doesn't already exists, extract smartphone informations.
+        if brand_name.lower().replace("-phones", "") in valid_brands:
+            brand_export_file = f"Exports/{brand_name}-export.csv"
+                # If file doesn't already exists, extract smartphone informations.
             if not Path(brand_export_file).is_file():
                 brand_dict = pd.DataFrame.from_records(
-                    extract_brand_infos(network, brand)
-                )
+                        extract_brand_infos(network, brand)
+                    )
                 brand_dict.to_csv(brand_export_file, sep=";", index=False)
                 global_list_smartphones = pd.concat(
-                    [global_list_smartphones, brand_dict], sort=False
-                )
-            # Otherwise, read the file.
+                        [global_list_smartphones, brand_dict], sort=False
+                    )
+                # Otherwise, read the file.
             else:
                 logger.warning(
-                    "Skipping %s, %s already exists. Its content will be added to the global export file.",
-                    brand_name,
-                    brand_export_file,
-                )
+                        "Skipping %s, %s already exists. Its content will be added to the global export file.",
+                        brand_name,
+                        brand_export_file,
+                    )
                 brand_dict = pd.read_csv(brand_export_file, sep=";")
                 global_list_smartphones = pd.concat(
-                    [global_list_smartphones, brand_dict], sort=False
-                )
+                        [global_list_smartphones, brand_dict], sort=False
+                    )
         else:
             logger.warning("Brand %s not found" % brand_name)
-    all_export_file = "Exports/all_brands_export.csv"
-    logger.info("Exporting all smartphone to %s.", all_export_file)
-    global_list_smartphones.to_csv(all_export_file, sep=";", index=False)
+    return global_list_smartphones
 
-    logger.info("Runtime : %.2f seconds" % (time.time() - temps_debut))
+
+def get_smartphones_from_search(network, phones):
+    global_list_smartphones = pd.DataFrame()
+    smartphone_list = []
+    for phone in phones:
+        smartphone_dict, completed = extract_smartphone_infos(network, phone)
+        if completed:
+            logger.info("we are done")
+            return smartphone_list
+        if smartphone_dict is not None:
+            smartphone_list.append(smartphone_dict)
+    global_list_smartphones.from_records(smartphone_list)
+    return global_list_smartphones
 
 
 def parse_args():
@@ -256,17 +286,26 @@ def parse_args():
         const=logging.DEBUG,
         default=logging.INFO,
     )
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
         "--brand", 
         help="Select a brand",
         dest="brand_names",
         nargs='+'
     )
+    group.add_argument(
+        "--search", 
+        help="Search for a phone",
+        dest="search",
+        nargs='+'
+    )
     args = parser.parse_args()
-    args.brand_names = [element.lower() for element in args.brand_names]
+    if (args.brand_names is not None):
+        args.brand_names = [element.lower() for element in args.brand_names]
+    if (args.search is not None):
+        args.search = [element.lower() for element in args.search]
     logger.setLevel(args.loglevel)
     handler = logging.StreamHandler()
-    # handler.setLevel(logging.INFO)
     logger.addHandler(handler)
     return args
 
