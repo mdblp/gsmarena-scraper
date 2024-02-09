@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 from pathlib import Path
 from stem import Signal
 from stem.control import Controller
-import os
+from helper import extract_os_versions, extract_internalmemory
 
 logger = logging.getLogger("gsmarena-scraper")
 temps_debut = time.time()
@@ -56,7 +56,6 @@ class tor_network:
         self.ntries = 0
         time.sleep(2)
 
-
 def extract_smartphone_infos(network, smartphone, year="2018"):
     smartphone_dict = dict()
     smartphone = smartphone.find("a")
@@ -85,9 +84,11 @@ def extract_smartphone_infos(network, smartphone, year="2018"):
         smartphone_dict["Weight"] = soup_smartphone.find(
             "span", {"data-spec": "body-hl"}
         ).text.strip()
-        smartphone_dict["OS"] = soup_smartphone.find(
+        os = soup_smartphone.find(
             "span", {"data-spec": "os-hl"}
         ).text.strip()
+        smartphone_dict["OS"], smartphone_dict["OS Upper"] = extract_os_versions(os)
+        
         smartphone_dict["Storage"] = soup_smartphone.find(
             "span", {"data-spec": "storage-hl"}
         ).text.strip()
@@ -151,6 +152,8 @@ def extract_smartphone_infos(network, smartphone, year="2018"):
                 smartphone_dict[type] = value.replace("\n", " ").replace(
                     "\r", " "
                 )
+                if type == "internalmemory": 
+                    smartphone_dict[type+"_min"] = extract_internalmemory(value)
                 logger.debug("%s : %s", type, value)
             except Exception:
                 pass
@@ -187,7 +190,10 @@ def extract_brand_infos(network, brand):
             ).find_all("li")
             soup_page.decompose()
             for smartphone in smartphones:
-                smartphone_dict, completed = extract_smartphone_infos(network, smartphone)
+                if (brand_name == 'apple-phones' or brand_name == 'google-phones') : 
+                    smartphone_dict, completed = extract_smartphone_infos(network, smartphone, "2016")
+                else:
+                    smartphone_dict, completed = extract_smartphone_infos(network, smartphone)
                 if completed:
                     logger.info("we are done")
                     return smartphone_list
